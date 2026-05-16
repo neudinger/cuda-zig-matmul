@@ -19,15 +19,45 @@ zig_static_library(
     ],
 )
 
+zig_static_library(
+    name = "matmul_kernel_f16",
+    main = "src/matmul_kernel_f16.zig",
+    compiler_runtime = "exclude",
+    emit_bin = False,
+    emit_llvm_ir = True,
+    zigopts = [
+        "-O",
+        "ReleaseFast",
+        "-mcpu=sm_120",
+        "-fno-stack-protector",
+        "-fstrip",
+    ],
+    target_compatible_with = [
+        "//platforms/cpu:nvptx64",
+    ],
+)
+
 filegroup(
     name = "matmul_llvm_ir",
     srcs = [":matmul_kernel"],
     output_group = "llvm_ir",
 )
 
+filegroup(
+    name = "matmul_f16_llvm_ir",
+    srcs = [":matmul_kernel_f16"],
+    output_group = "llvm_ir",
+)
+
 platform_transition_filegroup(
     name = "matmul_llvm_ir_cuda",
     srcs = [":matmul_llvm_ir"],
+    target_platform = "//platforms:cuda_nvptx64",
+)
+
+platform_transition_filegroup(
+    name = "matmul_f16_llvm_ir_cuda",
+    srcs = [":matmul_f16_llvm_ir"],
     target_platform = "//platforms:cuda_nvptx64",
 )
 
@@ -48,13 +78,51 @@ sed -E \
 """,
 )
 
+genrule(
+    name = "matmul_f16_ptx_cuda",
+    srcs = [":matmul_f16_llvm_ir_cuda"],
+    outs = ["matmul_kernel_f16.ptx"],
+    cmd = """
+set -euo pipefail
+src="$(location :matmul_f16_llvm_ir_cuda)"
+patched="$(@D)/matmul_kernel_f16.patched.ll"
+sed -E \
+  -e 's/^@matmul = alias (.*), ptr @(.+)$$/; removed NVPTX-incompatible alias: @matmul = alias \\1, ptr @\\2/' \
+  -e 's/^define private ptx_kernel void @[^ (]+\\(/define ptx_kernel void @matmul(/' \
+  -e 's/ unnamed_addr//g' \
+  "$$src" > "$$patched"
+/usr/lib/llvm-21/bin/llc -march=nvptx64 -mcpu=sm_120 -mattr=+ptx87 -o "$@" "$$patched"
+""",
+)
+
 zig_binary(
     name = "cuda_matmul",
     main = "src/main.zig",
     args = [
-        "--ptx=$(location :matmul_ptx_cuda)",
+        "--ptx-bf16=$(location :matmul_ptx_cuda)",
+        "--ptx-f16=$(location :matmul_f16_ptx_cuda)",
     ],
     data = [
+        ":matmul_f16_ptx_cuda",
+        ":matmul_ptx_cuda",
+    ],
+    zigopts = [
+        "-fllvm",
+        "-lc",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+zig_binary(
+    name = "cuda_matmul_f16",
+    main = "src/main.zig",
+    args = [
+        "--math=f16",
+        "--ptx-bf16=$(location :matmul_ptx_cuda)",
+        "--ptx-f16=$(location :matmul_f16_ptx_cuda)",
+    ],
+    data = [
+        ":matmul_f16_ptx_cuda",
         ":matmul_ptx_cuda",
     ],
     zigopts = [

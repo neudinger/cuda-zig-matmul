@@ -73,9 +73,52 @@ const CublasGemmEx = *const fn (
 ) callconv(.c) CublasStatus;
 
 const CUBLAS_OP_N = 0;
+const CUDA_R_32F = 0;
+const CUDA_R_16F = 2;
 const CUDA_R_16BF = 14;
+const CUBLAS_COMPUTE_32F_FAST_16F = 74;
 const CUBLAS_COMPUTE_32F_FAST_16BF = 75;
 const CUBLAS_GEMM_DEFAULT_TENSOR_OP = 99;
+
+const Math = enum {
+    bf16,
+    f16,
+
+    fn name(self: Math) []const u8 {
+        return switch (self) {
+            .bf16 => "bf16",
+            .f16 => "f16",
+        };
+    }
+
+    fn inputCudaType(self: Math) c_int {
+        return switch (self) {
+            .bf16 => CUDA_R_16BF,
+            .f16 => CUDA_R_16F,
+        };
+    }
+
+    fn outputCudaType(self: Math) c_int {
+        return switch (self) {
+            .bf16 => CUDA_R_16BF,
+            .f16 => CUDA_R_32F,
+        };
+    }
+
+    fn computeType(self: Math) c_int {
+        return switch (self) {
+            .bf16 => CUBLAS_COMPUTE_32F_FAST_16BF,
+            .f16 => CUBLAS_COMPUTE_32F_FAST_16F,
+        };
+    }
+
+    fn outputElementSize(self: Math) usize {
+        return switch (self) {
+            .bf16 => @sizeOf(u16),
+            .f16 => @sizeOf(f32),
+        };
+    }
+};
 
 const Impl = enum {
     zig,
@@ -93,7 +136,10 @@ const Impl = enum {
 
 const Options = struct {
     ptx_path: ?[]const u8 = null,
+    ptx_bf16_path: ?[]const u8 = null,
+    ptx_f16_path: ?[]const u8 = null,
     impl: Impl = .zig,
+    math: Math = .bf16,
     m: usize = 1024,
     n: usize = 1024,
     k: usize = 1024,
@@ -243,7 +289,7 @@ pub fn main(init: std.process.Init) !void {
     defer _ = cuda.cuCtxDestroy(context);
 
     const ptx_text = if (opts.impl.runsZig()) blk: {
-        const ptx_path = opts.ptx_path orelse return error.MissingPtxPath;
+        const ptx_path = selectedPtxPath(opts) orelse return error.MissingPtxPath;
         break :blk try readPtxText(init.io, allocator, args[0], ptx_path);
     } else try allocator.dupe(u8, "");
     defer allocator.free(ptx_text);
@@ -261,9 +307,9 @@ pub fn main(init: std.process.Init) !void {
         if (module != null) _ = cuda.cuModuleUnload(module);
     }
 
-    const a = try makeRowMajorMatrix(allocator, opts.m, opts.k, 3);
+    const a = try makeRowMajorMatrix(allocator, opts.m, opts.k, 3, opts.math);
     defer allocator.free(a);
-    const b_row = try makeRowMajorMatrix(allocator, opts.k, opts.n, 11);
+    const b_row = try makeRowMajorMatrix(allocator, opts.k, opts.n, 11, opts.math);
     defer allocator.free(b_row);
     const b_t = try transposeForKernel(allocator, b_row, opts.k, opts.n);
     defer allocator.free(b_t);
@@ -277,10 +323,7 @@ pub fn main(init: std.process.Init) !void {
 
     if (opts.impl.runsZig()) {
         const avg_ns = try runZigKernel(&cuda, function, &buffers, opts);
-        const c_zig = try allocator.alloc(u16, opts.m * opts.n);
-        defer allocator.free(c_zig);
-        try cuda.check(cuda.cuMemcpyDtoH(c_zig.ptr, buffers.c_zig, c_zig.len * @sizeOf(u16)));
-        try validateOutput("zig", c_zig, expected, opts);
+        try downloadAndValidate(&cuda, allocator, "zig", buffers.c_zig, expected, opts);
         printResult("zig", opts, avg_ns);
     }
 
@@ -288,10 +331,7 @@ pub fn main(init: std.process.Init) !void {
         var cublas = try Cublas.open();
         defer cublas.close();
         const avg_ns = try runCublas(&cuda, &cublas, &buffers, opts);
-        const c_out = try allocator.alloc(u16, opts.m * opts.n);
-        defer allocator.free(c_out);
-        try cuda.check(cuda.cuMemcpyDtoH(c_out.ptr, buffers.c_cublas, c_out.len * @sizeOf(u16)));
-        try validateOutput("cublas", c_out, expected, opts);
+        try downloadAndValidate(&cuda, allocator, "cublas", buffers.c_cublas, expected, opts);
         printResult("cublas", opts, avg_ns);
     }
 }
@@ -303,9 +343,16 @@ fn parseArgs(args: []const []const u8) !Options {
             opts.list_devices = true;
         } else if (std.mem.startsWith(u8, arg, "--ptx=")) {
             opts.ptx_path = arg["--ptx=".len..];
+        } else if (std.mem.startsWith(u8, arg, "--ptx-bf16=")) {
+            opts.ptx_bf16_path = arg["--ptx-bf16=".len..];
+        } else if (std.mem.startsWith(u8, arg, "--ptx-f16=")) {
+            opts.ptx_f16_path = arg["--ptx-f16=".len..];
         } else if (std.mem.startsWith(u8, arg, "--impl=")) {
             const value = arg["--impl=".len..];
             if (std.mem.eql(u8, value, "zig")) opts.impl = .zig else if (std.mem.eql(u8, value, "cublas")) opts.impl = .cublas else if (std.mem.eql(u8, value, "both")) opts.impl = .both else return error.InvalidImpl;
+        } else if (std.mem.startsWith(u8, arg, "--math=")) {
+            const value = arg["--math=".len..];
+            if (std.mem.eql(u8, value, "bf16")) opts.math = .bf16 else if (std.mem.eql(u8, value, "f16")) opts.math = .f16 else return error.InvalidMath;
         } else if (std.mem.startsWith(u8, arg, "--m=")) {
             opts.m = try std.fmt.parseInt(usize, arg["--m=".len..], 10);
         } else if (std.mem.startsWith(u8, arg, "--n=")) {
@@ -326,9 +373,17 @@ fn parseArgs(args: []const []const u8) !Options {
     return opts;
 }
 
+fn selectedPtxPath(opts: Options) ?[]const u8 {
+    if (opts.ptx_path) |path| return path;
+    return switch (opts.math) {
+        .bf16 => opts.ptx_bf16_path,
+        .f16 => opts.ptx_f16_path,
+    };
+}
+
 fn validateZigKernelDimensions(opts: Options) void {
     if (opts.m % 64 == 0 and opts.n % 64 == 0 and opts.k % 16 == 0) return;
-    log.err("zig kernel requires m % 64 == 0, n % 64 == 0, and k % 16 == 0; use --impl=cublas for arbitrary BF16 GEMM", .{});
+    log.err("zig kernel requires m % 64 == 0, n % 64 == 0, and k % 16 == 0; use --impl=cublas for arbitrary {s} GEMM", .{opts.math.name()});
     std.process.exit(2);
 }
 
@@ -390,7 +445,7 @@ fn sanitizePtxForCudaJit(allocator: std.mem.Allocator, ptx: []const u8) ![:0]u8 
 }
 
 fn allocAndUpload(cuda: *CudaDriver, buffers: *DeviceBuffers, a: []const u16, b_t: []const u16, b_row: []const u16, opts: Options) !void {
-    const c_bytes = opts.m * opts.n * @sizeOf(u16);
+    const c_bytes = opts.m * opts.n * opts.math.outputElementSize();
     try cuda.check(cuda.cuMemAlloc(&buffers.a, a.len * @sizeOf(u16)));
     try cuda.check(cuda.cuMemAlloc(&buffers.b_t, b_t.len * @sizeOf(u16)));
     try cuda.check(cuda.cuMemAlloc(&buffers.b_row, b_row.len * @sizeOf(u16)));
@@ -478,25 +533,25 @@ fn cublasGemm(cublas: *Cublas, handle: CublasHandle, b_ptr: *const anyopaque, a_
         @intCast(opts.k),
         @ptrCast(alpha),
         b_ptr,
-        CUDA_R_16BF,
+        opts.math.inputCudaType(),
         @intCast(opts.n),
         a_ptr,
-        CUDA_R_16BF,
+        opts.math.inputCudaType(),
         @intCast(opts.k),
         @ptrCast(beta),
         c_ptr,
-        CUDA_R_16BF,
+        opts.math.outputCudaType(),
         @intCast(opts.n),
-        CUBLAS_COMPUTE_32F_FAST_16BF,
+        opts.math.computeType(),
         CUBLAS_GEMM_DEFAULT_TENSOR_OP,
     ));
 }
 
-fn makeRowMajorMatrix(allocator: std.mem.Allocator, rows: usize, cols: usize, seed: u32) ![]u16 {
+fn makeRowMajorMatrix(allocator: std.mem.Allocator, rows: usize, cols: usize, seed: u32, math: Math) ![]u16 {
     const data = try allocator.alloc(u16, rows * cols);
     for (0..rows) |row| {
         for (0..cols) |col| {
-            data[row * cols + col] = f32ToBf16Bits(inputValue(row, col, seed));
+            data[row * cols + col] = encodeInputBits(inputValue(row, col, seed), math);
         }
     }
     return data;
@@ -512,17 +567,20 @@ fn transposeForKernel(allocator: std.mem.Allocator, b_row: []const u16, rows: us
     return out;
 }
 
-fn buildExpectedTable(opts: Options, allocator: std.mem.Allocator) ![]u16 {
-    const out = try allocator.alloc(u16, 23 * 23);
+fn buildExpectedTable(opts: Options, allocator: std.mem.Allocator) ![]f32 {
+    const out = try allocator.alloc(f32, 23 * 23);
     for (0..23) |row_mod| {
         for (0..23) |col_mod| {
             var sum: f32 = 0;
             for (0..opts.k) |kk| {
-                const a = bf16BitsToF32(f32ToBf16Bits(inputValue(row_mod, kk, 3)));
-                const b = bf16BitsToF32(f32ToBf16Bits(inputValue(kk, col_mod, 11)));
+                const a = inputBitsToF32(encodeInputBits(inputValue(row_mod, kk, 3), opts.math), opts.math);
+                const b = inputBitsToF32(encodeInputBits(inputValue(kk, col_mod, 11), opts.math), opts.math);
                 sum += a * b;
             }
-            out[row_mod * 23 + col_mod] = f32ToBf16Bits(sum);
+            out[row_mod * 23 + col_mod] = switch (opts.math) {
+                .bf16 => bf16BitsToF32(f32ToBf16Bits(sum)),
+                .f16 => sum,
+            };
         }
     }
     return out;
@@ -533,12 +591,50 @@ fn inputValue(row: usize, col: usize, seed: u32) f32 {
     return (raw - 11.0) / 8.0;
 }
 
-fn validateOutput(label: []const u8, got: []const u16, expected_table: []const u16, opts: Options) !void {
+fn downloadAndValidate(
+    cuda: *CudaDriver,
+    allocator: std.mem.Allocator,
+    label: []const u8,
+    device_ptr: CuDevicePtr,
+    expected: []const f32,
+    opts: Options,
+) !void {
+    switch (opts.math) {
+        .bf16 => {
+            const c_out = try allocator.alloc(u16, opts.m * opts.n);
+            defer allocator.free(c_out);
+            try cuda.check(cuda.cuMemcpyDtoH(c_out.ptr, device_ptr, c_out.len * @sizeOf(u16)));
+            try validateBf16Output(label, c_out, expected, opts);
+        },
+        .f16 => {
+            const c_out = try allocator.alloc(f32, opts.m * opts.n);
+            defer allocator.free(c_out);
+            try cuda.check(cuda.cuMemcpyDtoH(c_out.ptr, device_ptr, c_out.len * @sizeOf(f32)));
+            try validateF32Output(label, c_out, expected, opts);
+        },
+    }
+}
+
+fn validateBf16Output(label: []const u8, got: []const u16, expected_table: []const f32, opts: Options) !void {
     for (0..opts.m) |row| {
         for (0..opts.n) |col| {
             const actual = bf16BitsToF32(got[row * opts.n + col]);
-            const expected = bf16BitsToF32(expected_table[(row % 23) * 23 + (col % 23)]);
+            const expected = expected_table[(row % 23) * 23 + (col % 23)];
             const tolerance = @max(@as(f32, 0.25), @abs(expected) * 0.025);
+            if (@abs(actual - expected) > tolerance) {
+                log.err("{s} mismatch at ({d}, {d}): got {d:.6}, expected {d:.6}, tolerance {d:.6}", .{ label, row, col, actual, expected, tolerance });
+                return error.ValidationFailed;
+            }
+        }
+    }
+}
+
+fn validateF32Output(label: []const u8, got: []const f32, expected_table: []const f32, opts: Options) !void {
+    for (0..opts.m) |row| {
+        for (0..opts.n) |col| {
+            const actual = got[row * opts.n + col];
+            const expected = expected_table[(row % 23) * 23 + (col % 23)];
+            const tolerance = @max(@as(f32, 1.0e-2), @abs(expected) * 5.0e-3);
             if (@abs(actual - expected) > tolerance) {
                 log.err("{s} mismatch at ({d}, {d}): got {d:.6}, expected {d:.6}, tolerance {d:.6}", .{ label, row, col, actual, expected, tolerance });
                 return error.ValidationFailed;
@@ -550,7 +646,21 @@ fn validateOutput(label: []const u8, got: []const u16, expected_table: []const u
 fn printResult(label: []const u8, opts: Options, avg_ns: f64) void {
     const ops = 2.0 * @as(f64, @floatFromInt(opts.m)) * @as(f64, @floatFromInt(opts.n)) * @as(f64, @floatFromInt(opts.k));
     const tflops = ops / avg_ns / 1.0e3;
-    std.debug.print("{s} validation passed: m={d} n={d} k={d} avg_ns={d:.2} TFLOP/s={d:.4}\n", .{ label, opts.m, opts.n, opts.k, avg_ns, tflops });
+    std.debug.print("{s} validation passed: math={s} m={d} n={d} k={d} avg_ns={d:.2} TFLOP/s={d:.4}\n", .{ label, opts.math.name(), opts.m, opts.n, opts.k, avg_ns, tflops });
+}
+
+fn encodeInputBits(value: f32, math: Math) u16 {
+    return switch (math) {
+        .bf16 => f32ToBf16Bits(value),
+        .f16 => f32ToF16Bits(value),
+    };
+}
+
+fn inputBitsToF32(bits: u16, math: Math) f32 {
+    return switch (math) {
+        .bf16 => bf16BitsToF32(bits),
+        .f16 => f16BitsToF32(bits),
+    };
 }
 
 fn f32ToBf16Bits(value: f32) u16 {
@@ -559,8 +669,18 @@ fn f32ToBf16Bits(value: f32) u16 {
     return @truncate((bits + rounding_bias) >> 16);
 }
 
+fn f32ToF16Bits(value: f32) u16 {
+    const half: f16 = @floatCast(value);
+    return @bitCast(half);
+}
+
 fn bf16BitsToF32(bits: u16) f32 {
     return @bitCast(@as(u32, bits) << 16);
+}
+
+fn f16BitsToF32(bits: u16) f32 {
+    const half: f16 = @bitCast(bits);
+    return @floatCast(half);
 }
 
 fn nanoTimestamp() !i128 {
