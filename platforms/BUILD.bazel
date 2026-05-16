@@ -1,0 +1,7 @@
+platform(
+    name = "cuda_nvptx64",
+    constraint_values = [
+        "//platforms/cpu:nvptx64",
+    ],
+    visibility = ["//visibility:public"],
+)

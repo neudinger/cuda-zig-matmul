@@ -1,0 +1,5 @@
+constraint_value(
+    name = "nvptx64",
+    constraint_setting = "@platforms//cpu",
+    visibility = ["//visibility:public"],
+)

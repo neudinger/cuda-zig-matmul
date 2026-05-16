@@ -1,0 +1,25 @@
+module(
+    name = "cuda_zig_matmul",
+)
+
+bazel_dep(name = "bazel_lib", version = "3.2.2")
+bazel_dep(name = "platforms", version = "1.1.0")
+bazel_dep(name = "rules_zig", version = "0.12.2")
+
+git_override(
+    module_name = "rules_zig",
+    commit = "6e9d876037ecb01ce4354c9c9e0c93e026e84e37",
+    remote = "https://github.com/zml/rules_zig.git",
+)
+
+zig = use_extension("@rules_zig//zig:extensions.bzl", "zig")
+zig.index(file = "//bazel:zig_index.json")
+zig.toolchain(
+    default = True,
+    zig_version = "0.16.0-dev.3153+d6f43caad",
+)
+use_repo(zig, "zig_toolchains")
+
+register_toolchains("@rules_zig//zig/target:all")
+register_toolchains("@zig_toolchains//:all")
+register_toolchains("//toolchains:cuda_nvptx64_target_toolchain")

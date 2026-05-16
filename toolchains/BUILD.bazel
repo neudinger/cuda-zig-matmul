@@ -1,0 +1,16 @@
+load("@rules_zig//zig:toolchain.bzl", "zig_target_toolchain")
+
+zig_target_toolchain(
+    name = "cuda_nvptx64",
+    target = "nvptx64-cuda",
+)
+
+toolchain(
+    name = "cuda_nvptx64_target_toolchain",
+    target_compatible_with = [
+        "//platforms/cpu:nvptx64",
+    ],
+    toolchain = ":cuda_nvptx64",
+    toolchain_type = "@rules_zig//zig/target:toolchain_type",
+    visibility = ["//visibility:public"],
+)
