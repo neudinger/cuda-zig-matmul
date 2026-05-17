@@ -2,7 +2,7 @@ load("@rules_zig//zig:toolchain.bzl", "zig_target_toolchain")
 
 zig_target_toolchain(
     name = "cuda_nvptx64",
-    target = "nvptx64-cuda",
+    target = "nvptx64-cuda-none",
 )
 
 toolchain(

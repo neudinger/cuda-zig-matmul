@@ -10,9 +10,9 @@ The project uses:
 - optional cuBLAS comparison via `libcublas.so`;
 - Bazel to build a pinned Zig toolchain and the runner.
 
-The CUDA kernel is emitted as LLVM IR first, then converted to PTX with
-`/usr/lib/llvm-21/bin/llc`. This avoids the current upstream Zig NVPTX export
-alias crash while keeping the kernel source Zig-only.
+The CUDA kernels are emitted directly as Zig NVPTX assembly/PTX through Bazel's
+`asm` output group. The repo builds a patched source Zig toolchain so NVPTX
+kernel exports are emitted without LLVM aliases.
 
 ## Commands
 

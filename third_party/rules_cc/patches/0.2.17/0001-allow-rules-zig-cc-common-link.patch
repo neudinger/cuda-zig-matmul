@@ -1,0 +1,23 @@
+From 1ef3331638996a443d7adc9cfc41749636ce6ef2 Mon Sep 17 00:00:00 2001
+From: Codex <codex@openai.com>
+Date: Sun, 17 May 2026 05:40:00 +0200
+Subject: [PATCH] allow rules_zig cc_common_link shim
+
+---
+ cc/common/cc_helper_internal.bzl | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/cc/common/cc_helper_internal.bzl b/cc/common/cc_helper_internal.bzl
+index 5f947a1..256449e 100644
+--- a/cc/common/cc_helper_internal.bzl
++++ b/cc/common/cc_helper_internal.bzl
+@@ -48,6 +48,7 @@ PRIVATE_STARLARKIFICATION_ALLOWLIST = [
+     ("", "third_party/bazel_rules/rules_android"),
+     ("build_bazel_rules_android", ""),
+     ("rules_android", ""),
++    ("rules_zig++cc_common_link+build_bazel_rules_android", ""),
+     # Apple rules
+     ("", "third_party/bazel_rules/rules_apple"),
+     ("apple_support", ""),
+-- 
+2.48.1

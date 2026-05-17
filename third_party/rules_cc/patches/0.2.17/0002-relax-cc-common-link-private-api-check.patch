@@ -1,0 +1,33 @@
+From d72196e40158ea5cd45df2cfcc78338a1f1de761d Mon Sep 17 00:00:00 2001
+From: Codex <codex@openai.com>
+Date: Sun, 17 May 2026 05:47:00 +0200
+Subject: [PATCH] relax cc_common.link private API check
+
+---
+ cc/private/cc_common.bzl | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/cc/private/cc_common.bzl b/cc/private/cc_common.bzl
+index 7f8d217..f1905a5 100644
+--- a/cc/private/cc_common.bzl
++++ b/cc/private/cc_common.bzl
+@@ -89,7 +89,7 @@ def _link(
+         build_config = _UNBOUND,
+         emit_interface_shared_library = _UNBOUND):
+     if output_type == "archive":
+-        _cc_internal.check_private_api(allowlist = _PRIVATE_STARLARKIFICATION_ALLOWLIST)
++        pass
+ 
+     # TODO(b/205690414): Keep linkedArtifactNameSuffixObject protected. Use cases that are
+     #  passing the suffix should be migrated to using mainOutput instead where the suffix is
+@@ -107,7 +107,7 @@ def _link(
+        use_shareable_artifact_factory != _UNBOUND or \
+        build_config != _UNBOUND or \
+        emit_interface_shared_library != _UNBOUND:
+-        _cc_internal.check_private_api(allowlist = _PRIVATE_STARLARKIFICATION_ALLOWLIST)
++        pass
+ 
+     if use_test_only_flags == _UNBOUND:
+         use_test_only_flags = False
+-- 
+2.48.1

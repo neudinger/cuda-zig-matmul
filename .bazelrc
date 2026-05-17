@@ -1,0 +1,10 @@
+common --@rules_zig//zig/settings:bootstrapped=True
+common --@rules_zig//zig/settings:zigopt=-fllvm
+common --@rules_zig//zig/settings:host_mode=release_safe
+common --@rules_zig//zig/settings:host_use_cc_common_link=True
+common --@rules_zig//zig/settings:use_cc_common_link=True
+common --@rules_zig//zig/settings:use_standalone_translate_c=True
+common --repo_env=CC=/home/neudinger/cuda-zig-matmul/tools/clang21_stack.sh
+common --repo_env=CXX=/home/neudinger/cuda-zig-matmul/tools/clangxx21_stack.sh
+build --sandbox_add_mount_pair=/var/tmp
+build --sandbox_writable_path=/var/tmp/zig-cache

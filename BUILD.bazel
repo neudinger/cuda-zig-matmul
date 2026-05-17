@@ -6,7 +6,7 @@ zig_static_library(
     main = "src/matmul_kernel.zig",
     compiler_runtime = "exclude",
     emit_bin = False,
-    emit_llvm_ir = True,
+    emit_asm = True,
     zigopts = [
         "-O",
         "ReleaseFast",
@@ -24,7 +24,7 @@ zig_static_library(
     main = "src/matmul_kernel_f16.zig",
     compiler_runtime = "exclude",
     emit_bin = False,
-    emit_llvm_ir = True,
+    emit_asm = True,
     zigopts = [
         "-O",
         "ReleaseFast",
@@ -38,61 +38,27 @@ zig_static_library(
 )
 
 filegroup(
-    name = "matmul_llvm_ir",
+    name = "matmul_ptx",
     srcs = [":matmul_kernel"],
-    output_group = "llvm_ir",
+    output_group = "asm",
 )
 
 filegroup(
-    name = "matmul_f16_llvm_ir",
+    name = "matmul_f16_ptx",
     srcs = [":matmul_kernel_f16"],
-    output_group = "llvm_ir",
+    output_group = "asm",
 )
 
 platform_transition_filegroup(
-    name = "matmul_llvm_ir_cuda",
-    srcs = [":matmul_llvm_ir"],
-    target_platform = "//platforms:cuda_nvptx64",
-)
-
-platform_transition_filegroup(
-    name = "matmul_f16_llvm_ir_cuda",
-    srcs = [":matmul_f16_llvm_ir"],
-    target_platform = "//platforms:cuda_nvptx64",
-)
-
-genrule(
     name = "matmul_ptx_cuda",
-    srcs = [":matmul_llvm_ir_cuda"],
-    outs = ["matmul_kernel.ptx"],
-    cmd = """
-set -euo pipefail
-src="$(location :matmul_llvm_ir_cuda)"
-patched="$(@D)/matmul_kernel.patched.ll"
-sed -E \
-  -e 's/^@matmul = alias (.*), ptr @(.+)$$/; removed NVPTX-incompatible alias: @matmul = alias \\1, ptr @\\2/' \
-  -e 's/^define private ptx_kernel void @[^ (]+\\(/define ptx_kernel void @matmul(/' \
-  -e 's/ unnamed_addr//g' \
-  "$$src" > "$$patched"
-/usr/lib/llvm-21/bin/llc -march=nvptx64 -mcpu=sm_120 -mattr=+ptx87 -o "$@" "$$patched"
-""",
+    srcs = [":matmul_ptx"],
+    target_platform = "//platforms:cuda_nvptx64",
 )
 
-genrule(
+platform_transition_filegroup(
     name = "matmul_f16_ptx_cuda",
-    srcs = [":matmul_f16_llvm_ir_cuda"],
-    outs = ["matmul_kernel_f16.ptx"],
-    cmd = """
-set -euo pipefail
-src="$(location :matmul_f16_llvm_ir_cuda)"
-patched="$(@D)/matmul_kernel_f16.patched.ll"
-sed -E \
-  -e 's/^@matmul = alias (.*), ptr @(.+)$$/; removed NVPTX-incompatible alias: @matmul = alias \\1, ptr @\\2/' \
-  -e 's/^define private ptx_kernel void @[^ (]+\\(/define ptx_kernel void @matmul(/' \
-  -e 's/ unnamed_addr//g' \
-  "$$src" > "$$patched"
-/usr/lib/llvm-21/bin/llc -march=nvptx64 -mcpu=sm_120 -mattr=+ptx87 -o "$@" "$$patched"
-""",
+    srcs = [":matmul_f16_ptx"],
+    target_platform = "//platforms:cuda_nvptx64",
 )
 
 zig_binary(

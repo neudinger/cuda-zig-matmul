@@ -1,0 +1,20 @@
+load("@rules_zig//zig:toolchain.bzl", "zig_toolchain")
+
+zig_toolchain(
+    name = "zig_from_source",
+    zig_cache = "/var/tmp/zig-cache",
+    zig_exe = "@zig//:zig",
+    zig_h = "@zig//:zig_h",
+    zig_lib = "@zig//:lib_dir",
+    zig_version = "0.16.0",
+)
+
+toolchain(
+    name = "zig_from_source_toolchain",
+    target_settings = [
+        "@rules_zig//zig/config/bootstrapped:bootstrap_enabled",
+    ],
+    toolchain = ":zig_from_source",
+    toolchain_type = "@rules_zig//zig:toolchain_type",
+    visibility = ["//visibility:public"],
+)
