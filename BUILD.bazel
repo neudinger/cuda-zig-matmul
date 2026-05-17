@@ -1,64 +1,36 @@
-load("@bazel_lib//lib:transitions.bzl", "platform_transition_filegroup")
-load("@rules_zig//zig:defs.bzl", "zig_binary", "zig_static_library")
+load("@rules_zig//zig:defs.bzl", "zig_binary")
+load("//tools:zig_ptx.bzl", "zig_ptx")
 
-zig_static_library(
+zig_ptx(
     name = "matmul_kernel",
-    main = "src/matmul_kernel.zig",
-    compiler_runtime = "exclude",
-    emit_bin = False,
-    emit_asm = True,
-    zigopts = [
-        "-O",
-        "ReleaseFast",
-        "-mcpu=sm_120",
-        "-fno-stack-protector",
-        "-fstrip",
-    ],
-    target_compatible_with = [
-        "//platforms/cpu:nvptx64",
-    ],
+    out = "matmul_kernel.s",
+    src = "src/matmul_kernel.zig",
 )
 
-zig_static_library(
+zig_ptx(
     name = "matmul_kernel_f16",
-    main = "src/matmul_kernel_f16.zig",
-    compiler_runtime = "exclude",
-    emit_bin = False,
-    emit_asm = True,
-    zigopts = [
-        "-O",
-        "ReleaseFast",
-        "-mcpu=sm_120",
-        "-fno-stack-protector",
-        "-fstrip",
-    ],
-    target_compatible_with = [
-        "//platforms/cpu:nvptx64",
-    ],
+    out = "matmul_kernel_f16.s",
+    src = "src/matmul_kernel_f16.zig",
 )
 
 filegroup(
     name = "matmul_ptx",
     srcs = [":matmul_kernel"],
-    output_group = "asm",
 )
 
 filegroup(
     name = "matmul_f16_ptx",
     srcs = [":matmul_kernel_f16"],
-    output_group = "asm",
 )
 
-platform_transition_filegroup(
+filegroup(
     name = "matmul_ptx_cuda",
     srcs = [":matmul_ptx"],
-    target_platform = "//platforms:cuda_nvptx64",
 )
 
-platform_transition_filegroup(
+filegroup(
     name = "matmul_f16_ptx_cuda",
     srcs = [":matmul_f16_ptx"],
-    target_platform = "//platforms:cuda_nvptx64",
 )
 
 zig_binary(

@@ -8,11 +8,25 @@ The project uses:
 - a Zig host runner at `src/main.zig`;
 - CUDA Driver API via `libcuda.so.1`;
 - optional cuBLAS comparison via `libcublas.so`;
-- Bazel to build a pinned Zig toolchain and the runner.
+- Bazel with pinned Zig and LLVM toolchains.
 
-The CUDA kernels are emitted directly as Zig NVPTX assembly/PTX through Bazel's
-`asm` output group. The repo builds a patched source Zig toolchain so NVPTX
-kernel exports are emitted without LLVM aliases.
+The CUDA kernels are emitted by a small Bazel rule that runs the pinned prebuilt
+Zig compiler to produce LLVM IR for `nvptx64-cuda-none`, normalizes Zig's NVPTX
+export alias in that IR, and then runs the pinned Bazel LLVM clang toolchain to
+produce PTX.
+
+## Hermeticity
+
+Bazel is configured to use the pinned Bazel LLVM C/C++ toolchain for Linux
+x86_64 builds and to avoid Bazel's auto-detected host C/C++ toolchain. Zig comes
+from the pinned `rules_zig` index entry in `bazel/zig_index.json`; the kernel
+PTX path does not require a patched source-built Zig compiler. The remaining
+host requirements are runtime CUDA libraries loaded by the runner
+(`libcuda.so.1` and, for `--impl=cublas`/`--impl=both`, `libcublas.so`).
+
+One practical non-hermetic residual remains: Zig still writes local/global cache
+state under `/tmp/cuda-zig-matmul-zig-cache`, so the sandbox mounts only that
+cache path.
 
 ## Commands
 
